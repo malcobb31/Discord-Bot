@@ -1,0 +1,4 @@
+openpyxl
+discord.py
+python-dotenv
+matplotlib
