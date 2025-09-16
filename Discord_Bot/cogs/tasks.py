@@ -1,190 +1,136 @@
+# cogs/tasks.py
 import discord
 from discord.ext import commands
+from discord import app_commands
 import json
 import os
+from datetime import datetime
 
-DATA_FILE = "data/tasks.json"
+# Path to store tasks in JSON
+TASKS_FILE = "data/tasks.json"
 
 
+# ----------------- Utility Functions -----------------
+def load_tasks():
+    """Load tasks from the JSON file"""
+    if not os.path.exists(TASKS_FILE):
+        return {}
+    with open(TASKS_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_tasks(tasks):
+    """Save tasks to the JSON file"""
+    with open(TASKS_FILE, "w") as f:
+        json.dump(tasks, f, indent=4)
+
+
+# ----------------- Tasks Cog -----------------
 class Tasks(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        os.makedirs("data", exist_ok=True)
-        if not os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "w") as f:
-                json.dump({}, f)
 
-    def load_data(self):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
+    # ----------------- /mytasks -----------------
+    @app_commands.command(name="mytasks", description="View and manage your tasks for today")
+    async def mytasks(self, interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        today = str(datetime.now().date())
 
-    def save_data(self, data):
-        with open(DATA_FILE, "w") as f:
-            json.dump(data, f, indent=4)
+        tasks = load_tasks()
+        user_tasks = tasks.get(user_id, {}).get(today, [])
 
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        """Capture tasks submitted in #task-tracker"""
-        if message.author.bot:
-            return
-        if message.channel.name != "task-tracker":
+        if not user_tasks:
+            await interaction.response.send_message("❌ You don't have any tasks for today.", ephemeral=True)
             return
 
-        if message.content.startswith("Task:"):
-            # Split into multiple tasks
-            tasks = [
-                t.strip("- ").strip()
-                for t in message.content.splitlines()[1:]
-                if t.strip()
-            ]
-
-            if not tasks:
-                return
-
-            data = self.load_data()
-            data[str(message.author.id)] = [
-                {"task": t, "status": "pending"} for t in tasks
-            ]
-            self.save_data(data)
-
-            # Embed display
-            embed = discord.Embed(
-                title=f"📝 Tasks for {message.author.display_name}",
-                color=0x3498db,
-            )
-            for i, t in enumerate(tasks, start=1):
-                embed.add_field(name=f"Task {i}", value=f"{t} (⏳ Pending)", inline=False)
-
-            view = TaskButtons(self, message.author.id, len(tasks))
-            await message.channel.send(embed=embed, view=view)
-
-    @commands.command(name="mytask")
-    async def mytask(self, ctx):
-        """Show your current tasks"""
-        data = self.load_data()
-        tasks = data.get(str(ctx.author.id))
-
-        if not tasks:
-            await ctx.send("⚠️ You don’t have any tasks yet.")
-            return
-
+        # Create embed
         embed = discord.Embed(
-            title=f"📋 {ctx.author.display_name}'s Tasks",
-            color=0x2ecc71,
+            title=f"{interaction.user.name}'s Tasks ({today})",
+            color=discord.Color.blue()
         )
-        for i, task in enumerate(tasks, start=1):
-            status_icon = "✅" if task["status"] == "done" else (
-                "❌" if task["status"] == "not done" else "⏳"
-            )
+        for idx, task in enumerate(user_tasks, start=1):
             embed.add_field(
-                name=f"Task {i}",
-                value=f"{task['task']} ({status_icon} {task['status']})",
-                inline=False,
+                name=f"Task {idx}",
+                value=f"📝 {task['task']}  ⏱ {task['duration']}",
+                inline=False
             )
-        await ctx.send(embed=embed)
 
-    @commands.command(name="task_edit")
-    async def task_edit(self, ctx, task_number: int, *, new_text: str):
-        """Edit one of your tasks"""
-        data = self.load_data()
-        tasks = data.get(str(ctx.author.id))
+        # Buttons for Edit/Delete
+        view = TaskButtons(user_id, today)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-        if not tasks or task_number < 1 or task_number > len(tasks):
-            await ctx.send("⚠️ Invalid task number.")
+    # ----------------- /task (Admin only) -----------------
+    @app_commands.command(name="task", description="(Admin) View a user's tasks for a given date")
+    @app_commands.describe(user="The user to check", date="Date in YYYY-MM-DD format (optional)")
+    async def task(self, interaction: discord.Interaction, user: discord.Member, date: str = None):
+        # Admin check
+        member = interaction.user
+        # If interaction.user is not a Member, fetch from guild
+        if not isinstance(member, discord.Member):
+            if interaction.guild is not None:
+                member = interaction.guild.get_member(interaction.user.id)
+            else:
+                member = None
+        if not member or not member.guild_permissions.administrator:
+            await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
             return
 
-        tasks[task_number - 1]["task"] = new_text
-        self.save_data(data)
-        await ctx.send(f"✏️ Task {task_number} updated to: {new_text}")
+        user_id = str(user.id)
+        if date:
+            try:
+                date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                await interaction.response.send_message("❌ Invalid date format. Use YYYY-MM-DD.", ephemeral=True)
+                return
+        else:
+            date_obj = datetime.now().date()
 
-    @commands.command(name="task_delete")
-    async def task_delete(self, ctx, task_number: int):
-        """Delete one of your tasks"""
-        data = self.load_data()
-        tasks = data.get(str(ctx.author.id))
+        date_str = str(date_obj)
+        tasks = load_tasks()
+        user_tasks = tasks.get(user_id, {}).get(date_str, [])
 
-        if not tasks or task_number < 1 or task_number > len(tasks):
-            await ctx.send("⚠️ Invalid task number.")
+        if not user_tasks:
+            await interaction.response.send_message(f"❌ {user.name} has no tasks on {date_str}.", ephemeral=True)
             return
 
-        deleted = tasks.pop(task_number - 1)
-        self.save_data(data)
-        await ctx.send(f"🗑️ Deleted task: {deleted['task']}")
+        # Create embed
+        embed = discord.Embed(
+            title=f"{user.name}'s Tasks ({date_str})",
+            color=discord.Color.green()
+        )
+        for idx, task in enumerate(user_tasks, start=1):
+            embed.add_field(
+                name=f"Task {idx}",
+                value=f"📝 {task['task']}  ⏱ {task['duration']}",
+                inline=False
+            )
 
-    @commands.command(name="logs")
-    @commands.has_permissions(administrator=True)
-    async def logs(self, ctx):
-        """Show logs of all users' tasks (Admin only)"""
-        data = self.load_data()
-
-        if not data:
-            await ctx.send("📂 No tasks logged yet.")
-            return
-
-        embed = discord.Embed(title="📜 Task Logs", color=0xe67e22)
-
-        for user_id, tasks in data.items():
-            user = self.bot.get_user(int(user_id))
-            name = user.display_name if user else f"User {user_id}"
-
-            task_list = "\n".join(
-                [
-                    f"- {t['task']} ({t['status']})"
-                    for t in tasks
-                ]
-            ) or "No tasks"
-
-            embed.add_field(name=name, value=task_list, inline=False)
-
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+# ----------------- Buttons for Editing -----------------
 class TaskButtons(discord.ui.View):
-    def __init__(self, cog, user_id, task_count):
-        super().__init__(timeout=None)
-        self.cog = cog
+    def __init__(self, user_id, date):
+        super().__init__(timeout=60)  # buttons expire after 60s
         self.user_id = user_id
-        self.task_count = task_count
+        self.date = date
 
-        # Add ✅ and ❌ for each task
-        for i in range(task_count):
-            self.add_item(TaskButton(cog, user_id, i, "✅", "done"))
-            self.add_item(TaskButton(cog, user_id, i, "❌", "not done"))
+    @discord.ui.button(label="✏️ Edit Task", style=discord.ButtonStyle.primary)
+    async def edit_task(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("⚡ Edit task feature coming soon!", ephemeral=True)
 
+    @discord.ui.button(label="🗑 Delete Task", style=discord.ButtonStyle.danger)
+    async def delete_task(self, interaction: discord.Interaction, button: discord.ui.Button):
+        tasks = load_tasks()
 
-class TaskButton(discord.ui.Button):
-    def __init__(self, cog, user_id, task_index, label, status):
-        super().__init__(label=label,
-                         style=discord.ButtonStyle.green if status == "done" else discord.ButtonStyle.red)
-        self.cog = cog
-        self.user_id = user_id
-        self.task_index = task_index
-        self.status = status
-
-    async def callback(self, interaction: discord.Interaction):
-        data = self.cog.load_data()
-        tasks = data.get(str(self.user_id), [])
-
-        if 0 <= self.task_index < len(tasks):
-            tasks[self.task_index]["status"] = self.status
-            self.cog.save_data(data)
-
-            embed = discord.Embed(
-                title=f"📝 Tasks for {interaction.user.display_name}",
-                color=0x2ecc71,
-            )
-            for i, task in enumerate(tasks, start=1):
-                status_icon = "✅" if task["status"] == "done" else (
-                    "❌" if task["status"] == "not done" else "⏳"
-                )
-                embed.add_field(
-                    name=f"Task {i}",
-                    value=f"{task['task']} ({status_icon} {task['status']})",
-                    inline=False,
-                )
-
-            await interaction.response.edit_message(embed=embed, view=self.view)
+        if self.user_id in tasks and self.date in tasks[self.user_id]:
+            del tasks[self.user_id][self.date]
+            save_tasks(tasks)
+            await interaction.response.send_message("🗑 All tasks for today deleted!", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ No tasks found to delete.", ephemeral=True)
 
 
+# ----------------- Setup Function -----------------
 async def setup(bot):
     await bot.add_cog(Tasks(bot))

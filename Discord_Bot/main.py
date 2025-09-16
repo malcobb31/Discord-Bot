@@ -1,59 +1,61 @@
+# main.py
 import discord
 from discord.ext import commands
 import os
-import asyncio
 from dotenv import load_dotenv
-from cogs.keep_alive import keep_alive
-keep_alive()
+import asyncio
 
-
-
+# ----------------- Load Environment Variables -----------------
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("DISCORD_TOKEN")  # Your bot token in .env
+GUILD_ID = os.getenv("GUILD_ID")    # Optional: restrict commands to one server (faster sync)
 
+# ----------------- Bot Setup -----------------
 intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
+intents.message_content = True  # Required to read messages
+intents.members = True          # Required for attendance, punch-in tracking
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# List your cogs here
-initial_cogs = [
-    "cogs.punchin",
-    "cogs.attendance",
-    "cogs.tasks",
-]
-
-
+# ----------------- Startup Event -----------------
 @bot.event
 async def on_ready():
-    if bot.user is not None:
-        print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
-    else:
-        print("✅ Logged in, but bot.user is None")
-    print("🔗 Bot is ready and connected to Discord!")
+    """Runs when the bot is online"""
+    print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+    print("------")
+
+    try:
+        # Sync slash commands
+        if GUILD_ID:
+            guild = discord.Object(id=int(GUILD_ID))
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+            print(f"🔄 Synced slash commands to guild {GUILD_ID}")
+        else:
+            await bot.tree.sync()
+            print("🔄 Synced global slash commands")
+
+    except Exception as e:
+        print(f"❌ Failed to sync commands: {e}")
 
 
+# ----------------- Load Cogs -----------------
 async def load_cogs():
-    """Load all cogs with error handling"""
-    for cog in initial_cogs:
-        try:
-            await bot.load_extension(cog)
-            print(f"✅ Loaded {cog}")
-        except Exception as e:
-            print(f"❌ Failed to load {cog}: {e}")
+    """Load all cogs from cogs/ folder"""
+    for filename in os.listdir("./cogs"):
+        if filename.endswith(".py"):
+            try:
+                await bot.load_extension(f"cogs.{filename[:-3]}")
+                print(f"✅ Loaded cog: {filename}")
+            except Exception as e:
+                print(f"❌ Failed to load cog {filename}: {e}")
 
 
+# ----------------- Run Bot -----------------
 async def main():
-    if TOKEN is None:
-        print("❌ DISCORD_TOKEN environment variable not set.")
-        return
     async with bot:
         await load_cogs()
-        try:
-            await bot.start(TOKEN)
-        except Exception as e:
-            print(f"❌ Bot failed to start: {e}")
+        await bot.start(TOKEN)
 
 
 if __name__ == "__main__":
