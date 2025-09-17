@@ -42,7 +42,7 @@ class Logs(commands.Cog):
         if tasks_data:
             recent_tasks = []
             for user_id, task_list in tasks_data.items():
-                user = interaction.guild.get_member(int(user_id))
+                user = interaction.guild.get_member(int(user_id)) if interaction.guild else None
                 username = user.display_name if user else f"User({user_id})"
                 for task in task_list:
                     recent_tasks.append(f"📝 {username}: {task['task']} ({task['duration']}) on {task['date']}")
@@ -58,7 +58,7 @@ class Logs(commands.Cog):
         if attendance_data:
             recent_attendance = []
             for user_id, dates in attendance_data.items():
-                user = interaction.guild.get_member(int(user_id))
+                user = interaction.guild.get_member(int(user_id)) if interaction.guild else None
                 username = user.display_name if user else f"User({user_id})"
                 for date, status in dates.items():
                     recent_attendance.append(f"📅 {username}: {status} on {date}")

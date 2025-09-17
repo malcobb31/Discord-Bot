@@ -21,7 +21,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     """Runs when the bot is online"""
-    print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+    if bot.user is not None:
+        print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+    else:
+        print("✅ Logged in, but bot.user is None")
     print("------")
 
     try:
@@ -53,6 +56,8 @@ async def load_cogs():
 
 # ----------------- Run Bot -----------------
 async def main():
+    if TOKEN is None:
+        raise ValueError("DISCORD_TOKEN environment variable not set.")
     async with bot:
         await load_cogs()
         await bot.start(TOKEN)
